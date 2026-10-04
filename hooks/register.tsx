@@ -132,9 +132,8 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Client key="statusline" module="./statusline.tsx" props={{ ...line, ci: status }} />
-        <Box height={1} />
         {hint}
+        <Client key="statusline" module="./statusline.tsx" width="100%" props={{ ...line, ci: status }} />
       </Box>
     )
   })

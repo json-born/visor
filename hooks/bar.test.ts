@@ -1,7 +1,33 @@
 import { expect, test } from 'claude-code/testing'
 
 import { displayModel, parseShortstat } from './bar'
-import { contextColour, reanchor, sessionTime, shown } from './statusline'
+import { cells, contextColour, pack, reanchor, sections, sessionTime, shown } from './statusline'
+
+const props = {
+  branch: 'feat/teardown-teams-alert',
+  model: 'Opus 5.5',
+  contextPercent: 42,
+  sessionStartedAt: 0,
+  added: 12,
+  removed: 3,
+  now: 0,
+  ci: { branch: 'x', state: 'failed' as const, sha: '', detail: 'terraform apply', primary: 'Pipeline', now: 0 },
+}
+const lines = (columns: number) => pack(sections(props, 0, 0), columns).map(l => l.map(([t]) => t).join(''))
+
+test('status line moves whole sections onto new lines as it narrows', () => {
+  const wide = lines(500)
+  expect(wide.length).toBe(1)
+  for (const columns of [100, 70, 50, 40, 30]) {
+    const narrow = lines(columns)
+    expect(narrow.join(' | ')).toBe(wide[0])
+    expect(narrow.every(l => [...l].length <= columns)).toBe(true)
+    expect(narrow.some(l => l.startsWith(' | ') || l.endsWith(' | '))).toBe(false)
+  }
+  expect(lines(30).length > lines(70).length).toBe(true)
+  expect(lines(0)).toEqual(wide)
+  expect(cells([['█░', '']])).toBe(2)
+})
 
 test('reads git shortstat', () => {
   expect(parseShortstat(' 3 files changed, 678 insertions(+), 222 deletions(-)')).toEqual({ added: 678, removed: 222 })
