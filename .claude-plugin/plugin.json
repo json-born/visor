@@ -1,0 +1,1 @@
+{ "name": "my-mods", "version": "0.1.0", "description": "Personal band under the prompt: CI status for the current branch and context usage", "types": "./types/index.d.ts" }
