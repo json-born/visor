@@ -7,15 +7,30 @@ export const FAILING_CONCLUSIONS = new Set(['failure', 'timed_out', 'startup_fai
 const FRAME_MS = 80
 const PROGRESS_CELLS = 10
 
-const COLOUR = {
-  fg: '#c0caf5',
-  muted: '#a9b1d6',
-  comment: '#565f89',
-  dark: '#3b4261',
-  green: '#9ece6a',
-  yellow: '#e0af68',
-  red: '#f7768e',
-}
+type Theme = Record<'fg' | 'muted' | 'comment' | 'dark' | 'green' | 'yellow' | 'red', string>
+
+const THEMES = {
+  'Tokyo Night': {
+    fg: '#c0caf5',
+    muted: '#a9b1d6',
+    comment: '#565f89',
+    dark: '#3b4261',
+    green: '#9ece6a',
+    yellow: '#e0af68',
+    red: '#f7768e',
+  },
+  'Catppuccin Mocha': {
+    fg: '#cdd6f4',
+    muted: '#bac2de',
+    comment: '#6c7086',
+    dark: '#45475a',
+    green: '#a6e3a1',
+    yellow: '#f9e2af',
+    red: '#f38ba8',
+  },
+} satisfies Record<string, Theme>
+
+export type ThemeName = keyof typeof THEMES
 
 const ICON = {
   actions: '\uf52e',
@@ -30,11 +45,13 @@ const ICON = {
   none: '\uf10c',
 }
 
-const SPINNER_FRAMES = [...'⠁⠂⠄⡀⡈⡐⡠⣀⣁⣂⣄⣌⣔⣤⣥⣦⣮⣶⣷⣿⡿⠿⢟⠟⡛⠛⠫⢋⠋⠍⡉⠉⠑⠡⢁']
+const SPINNER_FRAMES = [...'⠁⠂⠄⠌⠔⠤⠥⠦⠮⠶⠷⠿⠟⠛⠫⠋⠍⠉⠑⠡']
 
-const SEPARATOR: Span = [' | ', COLOUR.comment]
-
-type Props = SessionInfo & { actions: GithubActionsStatus | null; now: number | null }
+type Props = SessionInfo & {
+  actions: GithubActionsStatus | null
+  now: number | null
+  theme: ThemeName
+}
 
 type Span = [text: string, colour?: string]
 
@@ -46,11 +63,13 @@ const Visor: ClientModule<Props, { frame: number }> = (props, surface) => {
     surface.every(FRAME_MS, () => surface.setState({ frame: (surface.state?.frame ?? 0) + 1 }))
   }
 
-  const lines = wrapSections(buildSections(props, surface.state?.frame ?? 0), surface.columns)
+  const colour = THEMES[props.theme]
+  const sections = buildSections(props, surface.state?.frame ?? 0)
+  const lines = wrapSections(sections, surface.columns, [' | ', colour.comment])
 
   return (
     <Box flexDirection="column" paddingTop={1}>
-      <Text color={COLOUR.dark}>{'─'.repeat(surface.columns)}</Text>
+      <Text color={colour.dark}>{'─'.repeat(surface.columns)}</Text>
       {lines.map(line => (
         <Text>
           {line.map(([text, colour]) => (
@@ -65,14 +84,15 @@ const Visor: ClientModule<Props, { frame: number }> = (props, surface) => {
 export default Visor
 
 export const buildSections = (props: Props, frame: number): Span[][] => {
+  const colour = THEMES[props.theme]
   const { contextPercent } = props
 
   const contextColour =
     contextPercent === null || contextPercent < 50
-      ? COLOUR.green
+      ? colour.green
       : contextPercent < 80
-        ? COLOUR.yellow
-        : COLOUR.red
+        ? colour.yellow
+        : colour.red
   const filledCells =
     contextPercent === null ? 0 : Math.round((contextPercent * PROGRESS_CELLS) / 100)
 
@@ -86,37 +106,37 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
   const sections: Span[][] = [
     props.branch
       ? [
-          [`${ICON.branch}  `, COLOUR.comment],
-          [props.branch, COLOUR.fg],
+          [`${ICON.branch}  `, colour.comment],
+          [props.branch, colour.fg],
         ]
       : [],
     [
-      [`${ICON.model}  `, COLOUR.comment],
-      [props.model, COLOUR.muted],
+      [`${ICON.model}  `, colour.comment],
+      [props.model, colour.muted],
     ],
     contextPercent !== null
       ? [
-          [`${ICON.context}  `, COLOUR.comment],
+          [`${ICON.context}  `, colour.comment],
           ['█'.repeat(filledCells), contextColour],
-          ['░'.repeat(PROGRESS_CELLS - filledCells), COLOUR.dark],
+          ['░'.repeat(PROGRESS_CELLS - filledCells), colour.dark],
           [` ${contextPercent}%`, contextColour],
         ]
       : [],
     [
-      [`${ICON.clock}  `, COLOUR.comment],
-      [sessionTime, COLOUR.muted],
+      [`${ICON.clock}  `, colour.comment],
+      [sessionTime, colour.muted],
       ...(props.added || props.removed
         ? ([
-            [` +${props.added}`, COLOUR.green],
-            ['/', COLOUR.comment],
-            [`-${props.removed}`, COLOUR.red],
+            [` +${props.added}`, colour.green],
+            ['/', colour.comment],
+            [`-${props.removed}`, colour.red],
           ] as Span[])
         : []),
     ],
     props.actions
       ? [
-          [`${ICON.actions}  `, COLOUR.comment],
-          ...buildActionsSpans(props.actions, props.branch, frame),
+          [`${ICON.actions}  `, colour.comment],
+          ...buildActionsSpans(props.actions, props.branch, frame, colour),
         ]
       : [],
   ]
@@ -124,18 +144,23 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
   return sections.filter(section => section.length > 0)
 }
 
-const buildActionsSpans = (actions: GithubActionsStatus, branch: string, frame: number): Span[] => {
+const buildActionsSpans = (
+  actions: GithubActionsStatus,
+  branch: string,
+  frame: number,
+  colour: Theme
+): Span[] => {
   const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? ''
   const { status, conclusion = '', detail } = actions
 
-  if (actions.branch !== branch) return [[`${spinner} checking…`, COLOUR.comment]]
+  if (actions.branch !== branch) return [[`${spinner} checking…`, colour.comment]]
 
-  if (!status) return [[`${ICON.none} no runs`, COLOUR.muted]]
+  if (!status) return [[`${ICON.none} no runs`, colour.muted]]
 
   if (status === 'in_progress') {
     return [
-      [spinner, COLOUR.fg],
-      [` ${detail || 'running'}`, COLOUR.comment],
+      [spinner, colour.fg],
+      [` ${detail || 'running'}`, colour.comment],
     ]
   }
 
@@ -143,27 +168,27 @@ const buildActionsSpans = (actions: GithubActionsStatus, branch: string, frame: 
     const isBlinkOn = Math.floor((frame * FRAME_MS) / 500) % 2 === 0
 
     return [
-      [ICON.queued, isBlinkOn ? COLOUR.yellow : COLOUR.dark],
-      [' queued', COLOUR.muted],
+      [ICON.queued, isBlinkOn ? colour.yellow : colour.dark],
+      [' queued', colour.muted],
     ]
   }
 
   if (FAILING_CONCLUSIONS.has(conclusion)) {
     return [
-      [`${ICON.fail} failed`, COLOUR.red],
-      ...(detail ? ([[` › ${detail}`, COLOUR.red]] as Span[]) : []),
+      [`${ICON.fail} failed`, colour.red],
+      ...(detail ? ([[` › ${detail}`, colour.red]] as Span[]) : []),
     ]
   }
 
-  if (conclusion === 'cancelled') return [[`${ICON.ban} cancelled`, COLOUR.comment]]
+  if (conclusion === 'cancelled') return [[`${ICON.ban} cancelled`, colour.comment]]
 
   return [
-    [ICON.check, COLOUR.green],
-    [' passed', COLOUR.muted],
+    [ICON.check, colour.green],
+    [' passed', colour.muted],
   ]
 }
 
-export const wrapSections = (sections: Span[][], columns: number): Span[][] => {
+export const wrapSections = (sections: Span[][], columns: number, separator: Span): Span[][] => {
   const width = (spans: Span[]) => spans.reduce((total, [text]) => total + [...text].length, 0)
   const lines: Span[][] = []
 
@@ -172,9 +197,9 @@ export const wrapSections = (sections: Span[][], columns: number): Span[][] => {
 
     if (
       lastLine &&
-      (columns <= 0 || width(lastLine) + width([SEPARATOR]) + width(section) <= columns)
+      (columns <= 0 || width(lastLine) + width([separator]) + width(section) <= columns)
     ) {
-      lastLine.push(SEPARATOR, ...section)
+      lastLine.push(separator, ...section)
     } else {
       lines.push([...section])
     }

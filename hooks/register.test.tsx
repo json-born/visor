@@ -5,6 +5,12 @@ import { formatModelName, POLL_TRIGGER_COMMANDS, parseShortstat } from './regist
 
 const GIT_STDOUT = { 'git branch': 'feat/x', 'git rev-parse': 'aaaaaaaaa', 'git diff': '' }
 
+const CI_OPTIONS = {
+  mainBranch: 'main',
+  githubActionsMainWorkflow: 'Pipeline',
+  githubActionsBranchWorkflow: 'Deploy CI Environment',
+}
+
 const PROMPT_HINT = {
   plugin: 'visor',
   surface: 'terminal',
@@ -24,20 +30,10 @@ const run = (fields: object) => ({
   ...fields,
 })
 
-const mockEngine = (
-  on: On,
-  stdoutByCommand: Record<string, string | null>,
-  holdRunList = false
-) => {
+const mockEngine = (on: On, stdoutByCommand: Record<string, string | null>) => {
   const commands: string[] = []
   const toasts: string[] = []
   const clock = mock.clock(on, { now: 100_000 })
-  let releaseRunList = () => {}
-  const runListGate = holdRunList
-    ? new Promise<void>(resolve => {
-        releaseRunList = resolve
-      })
-    : Promise.resolve()
 
   mock.store(on)
   on('session.start', async () => ({ cwd: '/repo' }))
@@ -58,8 +54,6 @@ const mockEngine = (
     const line = event.argv.join(' ')
     commands.push(line)
 
-    if (line.startsWith('gh run list')) await runListGate
-
     const key = Object.keys(stdoutByCommand).find(prefix => line.startsWith(prefix))
     const stdout = key === undefined ? null : (stdoutByCommand[key] ?? null)
 
@@ -76,26 +70,37 @@ const mockEngine = (
 
   const runListCalls = () => commands.filter(line => line.startsWith('gh run list')).length
 
-  return { commands, toasts, clock, releaseRunList, runListCalls }
+  return { commands, toasts, clock, runListCalls }
 }
 
 const statusText = async (ui: { findAll: (query: object) => Promise<{ text: string }[]> }) =>
   (await ui.findAll({ type: 'Text', in: 'visor' })).map(element => element.text).join('')
 
-test('shows the CI status once the first fetch lands', async ($, on) => {
-  const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': JSON.stringify([run({})]) }, true)
+test('shows the latest run of the branch workflow', { options: CI_OPTIONS }, async ($, on) => {
+  const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': JSON.stringify([run({})]) })
 
   await $.session.start(SESSION_START)
-  const ui = await $.ui.mount(PROMPT_HINT)
-  expect(await statusText(ui)).not.toMatch(/passed/)
-
-  mocks.releaseRunList()
   await mocks.clock.settle()
+  const ui = await $.ui.mount(PROMPT_HINT)
+
   expect(await statusText(ui)).toMatch(/passed/)
   expect(mocks.commands.some(line => line.includes('--workflow Deploy CI Environment'))).toBe(true)
 })
 
-test('names the running job and step', async ($, on) => {
+test('watches the main workflow on the main branch', { options: CI_OPTIONS }, async ($, on) => {
+  const mocks = mockEngine(on, {
+    ...GIT_STDOUT,
+    'git branch': 'main',
+    'gh run list': JSON.stringify([run({})]),
+  })
+
+  await $.session.start(SESSION_START)
+  await mocks.clock.settle()
+
+  expect(mocks.commands.some(line => line.includes('--workflow Pipeline'))).toBe(true)
+})
+
+test('names the running job and step', { options: CI_OPTIONS }, async ($, on) => {
   const jobs = [
     { name: 'lint', status: 'completed', conclusion: 'success' },
     {
@@ -121,7 +126,7 @@ test('names the running job and step', async ($, on) => {
   expect(await statusText(ui)).toMatch(/deploy › tf apply/)
 })
 
-test('names the failing job and step', async ($, on) => {
+test('names the failed job and step', { options: CI_OPTIONS }, async ($, on) => {
   const jobs = [
     {
       name: 'test',
@@ -143,7 +148,7 @@ test('names the failing job and step', async ($, on) => {
   expect(await statusText(ui)).toMatch(/failed › test › unit tests/)
 })
 
-test('shows no runs when gh cannot list them', async ($, on) => {
+test('shows no runs when gh cannot list them', { options: CI_OPTIONS }, async ($, on) => {
   const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': null })
 
   await $.session.start(SESSION_START)
@@ -154,7 +159,17 @@ test('shows no runs when gh cannot list them', async ($, on) => {
   expect(mocks.toasts).toEqual([])
 })
 
-test('does not ask GitHub outside a branch', async ($, on) => {
+test('shows a toast when gh output is unreadable', { options: CI_OPTIONS }, async ($, on) => {
+  const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': 'not json' })
+
+  await $.session.start(SESSION_START)
+  await mocks.clock.settle()
+
+  expect(mocks.toasts.length).toBe(1)
+  expect(mocks.toasts[0]).toMatch(/^GitHub poll failed: /)
+})
+
+test('skips GitHub outside a branch', { options: CI_OPTIONS }, async ($, on) => {
   const mocks = mockEngine(on, { 'git branch': '', 'git diff': '' })
 
   await $.session.start(SESSION_START)
@@ -163,7 +178,32 @@ test('does not ask GitHub outside a branch', async ($, on) => {
   expect(mocks.runListCalls()).toBe(0)
 })
 
-test('polls a settled result once a minute', async ($, on) => {
+test('skips GitHub until a workflow is configured', async ($, on) => {
+  const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': JSON.stringify([run({})]) })
+
+  await $.session.start(SESSION_START)
+  await mocks.clock.settle()
+  const ui = await $.ui.mount(PROMPT_HINT)
+
+  expect(mocks.runListCalls()).toBe(0)
+  expect(await statusText(ui)).not.toMatch(/\uf52e/)
+})
+
+test('polls every 5 seconds while a run is in progress', { options: CI_OPTIONS }, async ($, on) => {
+  const mocks = mockEngine(on, {
+    ...GIT_STDOUT,
+    'gh run list': JSON.stringify([run({ status: 'in_progress', conclusion: '' })]),
+  })
+
+  await $.session.start(SESSION_START)
+  await mocks.clock.settle()
+  expect(mocks.runListCalls()).toBe(1)
+
+  await mocks.clock.advance(5_000)
+  expect(mocks.runListCalls()).toBe(2)
+})
+
+test('polls once a minute when nothing is running', { options: CI_OPTIONS }, async ($, on) => {
   const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': JSON.stringify([run({})]) })
 
   await $.session.start(SESSION_START)
@@ -177,52 +217,27 @@ test('polls a settled result once a minute', async ($, on) => {
   expect(mocks.runListCalls()).toBe(2)
 })
 
-test('a poll already in flight makes the next one a no-op', async ($, on) => {
-  const mocks = mockEngine(
-    on,
-    { ...GIT_STDOUT, 'gh run list': JSON.stringify([run({ status: 'queued', conclusion: '' })]) },
-    true
-  )
+test(
+  'polls straight away after a push, then every 5 seconds',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': JSON.stringify([run({})]) })
+    on('tool.call', { tool: 'Bash' }, async () => ({ deny: 'not run in tests' }))
 
-  await $.session.start(SESSION_START)
-  await mocks.clock.advance(5_000)
-  expect(mocks.runListCalls()).toBe(1)
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    expect(mocks.runListCalls()).toBe(1)
 
-  mocks.releaseRunList()
-  await mocks.clock.settle()
-})
+    await $.tool.call({ tool: 'Bash', command: 'git push' })
+    await mocks.clock.settle()
+    expect(mocks.runListCalls()).toBe(2)
 
-test('polls once and goes quiet when there is nothing to find', async ($, on) => {
-  const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': null })
+    await mocks.clock.advance(5_000)
+    expect(mocks.runListCalls()).toBe(3)
+  }
+)
 
-  await $.session.start(SESSION_START)
-  await mocks.clock.settle()
-  expect(mocks.runListCalls()).toBe(1)
-
-  await mocks.clock.advance(5_000)
-  expect(mocks.runListCalls()).toBe(1)
-
-  await mocks.clock.advance(55_000)
-  expect(mocks.runListCalls()).toBe(2)
-})
-
-test('a push wakes the poll and polls fast for a while', async ($, on) => {
-  const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': JSON.stringify([run({})]) })
-  on('tool.call', { tool: 'Bash' }, async () => ({ deny: 'not run in tests' }))
-
-  await $.session.start(SESSION_START)
-  await mocks.clock.settle()
-  expect(mocks.runListCalls()).toBe(1)
-
-  await $.tool.call({ tool: 'Bash', command: 'git push' })
-  await mocks.clock.settle()
-  expect(mocks.runListCalls()).toBe(2)
-
-  await mocks.clock.advance(5_000)
-  expect(mocks.runListCalls()).toBe(3)
-})
-
-test('reads git shortstat', () => {
+test('parses git shortstat', () => {
   expect(parseShortstat(' 3 files changed, 678 insertions(+), 222 deletions(-)')).toEqual({
     added: 678,
     removed: 222,
@@ -231,7 +246,7 @@ test('reads git shortstat', () => {
   expect(parseShortstat('')).toEqual({ added: 0, removed: 0 })
 })
 
-test('formats model ids as readable names', () => {
+test('formats model ids as display names', () => {
   expect(
     [
       'claude-opus-5-5',
@@ -243,7 +258,7 @@ test('formats model ids as readable names', () => {
   ).toEqual(['Opus 5.5', 'Sonnet 5.5', 'Haiku 4.5', 'Opus 5.5', 'custom-model'])
 })
 
-test('kicks a check after pushes and reruns only', () => {
+test('polls after pushes, reruns and new PRs only', () => {
   expect(
     [
       'git push -u origin x',
@@ -255,14 +270,4 @@ test('kicks a check after pushes and reruns only', () => {
   expect(['git pull', 'git status', 'gh run list'].some(c => POLL_TRIGGER_COMMANDS.test(c))).toBe(
     false
   )
-})
-
-test('shows a toast when gh answers something unreadable', async ($, on) => {
-  const mocks = mockEngine(on, { ...GIT_STDOUT, 'gh run list': 'not json' })
-
-  await $.session.start(SESSION_START)
-  await mocks.clock.settle()
-
-  expect(mocks.toasts.length).toBe(1)
-  expect(mocks.toasts[0]).toMatch(/^GitHub poll failed: /)
 })

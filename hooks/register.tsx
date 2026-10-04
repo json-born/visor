@@ -1,6 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import type { GithubActionsStatus, SessionInfo } from '../types'
+import type { ThemeName } from './component'
 import { FAILING_CONCLUSIONS } from './component'
 
 export const POLL_TRIGGER_COMMANDS =
@@ -20,10 +21,13 @@ const githubActionsAtom = atom({ plugin: 'visor', key: 'github-actions' } as con
 const sessionAtom = atom({ plugin: 'visor', key: 'session' } as const, null)
 const clockAtom = atom({ plugin: 'visor', key: 'clock' } as const, null)
 
+let config: Record<string, unknown> = {}
 let fastPollUntil = 0
 let wakePollLoop = () => {}
 
-export const register: Register = on => {
+export const register: Register = (on, pluginOptions) => {
+  config = pluginOptions
+
   on('session.start', async ($, event, next) => {
     const result = await next(event)
 
@@ -53,7 +57,6 @@ export const register: Register = on => {
           })
       }
     })().catch(error => {
-      // The plugin unloading aborts the sleep, and with it every call on $: nothing to show then.
       try {
         $.ui.toast(`GitHub polling stopped: ${error instanceof Error ? error.message : error}`)
       } catch {}
@@ -93,7 +96,7 @@ export const register: Register = on => {
           key="visor"
           module="./component.tsx"
           width="100%"
-          props={{ ...session, actions, now }}
+          props={{ ...session, actions, now, theme: config.theme as ThemeName }}
         />
       </Box>
     )
@@ -132,7 +135,12 @@ const pollGithub = async ($: EngineInterface): Promise<GithubActionsStatus | nul
 
     if (!branchName) return null
 
-    const CIWorkflow = branchName === 'main' ? 'Pipeline' : 'Deploy CI Environment'
+    const CIWorkflow =
+      branchName === config.mainBranch && config.githubActionsMainWorkflow
+        ? String(config.githubActionsMainWorkflow)
+        : String(config.githubActionsBranchWorkflow ?? '')
+
+    if (!CIWorkflow) return null
 
     const ghRunListResult = await $.process.run(
       [
@@ -178,6 +186,7 @@ const pollGithub = async ($: EngineInterface): Promise<GithubActionsStatus | nul
     const job = jobs.find(
       job => job.status === 'in_progress' || FAILING_CONCLUSIONS.has(job.conclusion)
     )
+
     const step = job?.steps?.find(
       step => step.status === 'in_progress' || FAILING_CONCLUSIONS.has(step.conclusion)
     )

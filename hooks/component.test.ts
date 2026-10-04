@@ -11,6 +11,7 @@ const props = {
   contextPercent: 42,
   sessionStartedAt: 0,
   now: 104 * 60_000,
+  theme: 'Tokyo Night' as const,
   added: 12,
   removed: 3,
   actions: {
@@ -22,7 +23,7 @@ const props = {
 }
 
 const render = (overrides: Partial<typeof props> = {}, columns = 0) =>
-  wrapSections(buildSections({ ...props, ...overrides }, 0), columns).map(line =>
+  wrapSections(buildSections({ ...props, ...overrides }, 0), columns, [' | ', '']).map(line =>
     line.map(([text]) => text).join('')
   )
 
@@ -68,5 +69,15 @@ test('renders each CI state correctly', () => {
     '\uf05e cancelled',
     '\uf058 passed',
     '⠁ checking…',
+  ])
+})
+
+test('draws in the chosen theme', () => {
+  const branchColour = (theme: typeof props.theme | 'Catppuccin Mocha') =>
+    buildSections({ ...props, theme }, 0)[0]?.[1]?.[1]
+
+  expect([branchColour('Tokyo Night'), branchColour('Catppuccin Mocha')]).toEqual([
+    '#c0caf5',
+    '#cdd6f4',
   ])
 })

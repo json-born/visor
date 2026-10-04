@@ -1,1 +1,30 @@
-{ "name": "visor", "version": "0.1.0", "description": "A heads up display for Claude Code", "types": "./types/index.d.ts" }
+{
+  "name": "visor",
+  "version": "0.1.0",
+  "description": "A heads up display for Claude Code",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "theme": {
+      "type": "string",
+      "title": "Theme",
+      "description": "Your chosen theme",
+      "options": ["Tokyo Night", "Catppuccin Mocha"],
+      "default": "Tokyo Night"
+    },
+    "mainBranch": {
+      "type": "string",
+      "title": "Main branch",
+      "description": "The name of your main branch, e.g. main"
+    },
+    "githubActionsMainWorkflow": {
+      "type": "string",
+      "title": "Main workflow",
+      "description": "The name of the CI pipeline that runs on push to your main branch"
+    },
+    "githubActionsBranchWorkflow": {
+      "type": "string",
+      "title": "Branch workflow",
+      "description": "The name of the CI pipeline that runs on your pull request branches"
+    }
+  }
+}
