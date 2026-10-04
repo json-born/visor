@@ -1,140 +1,211 @@
-import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
+import { atom, read, update } from 'claude-code'
+import type { GithubActionsStatus, SessionInfo } from '../types'
+import { FAILING_CONCLUSIONS } from './component'
 
-import type { Bar, Ci } from '../types'
-import { displayModel, parseShortstat } from './bar'
-import { SETTLED, TRIGGERS, failure, primaryFor, running, summariseRuns } from './ci'
-import type { Job } from './ci'
+export const POLL_TRIGGER_COMMANDS =
+  /\bgit\s+push\b|\bgh\s+(run\s+rerun|workflow\s+run|pr\s+create)\b/
 
-const ci = atom({ plugin: 'my-mods', key: 'ci' } as const, null)
-const bar = atom({ plugin: 'my-mods', key: 'bar' } as const, null)
+const CURRENT_BRANCH_COMMAND = ['git', 'branch', '--show-current']
 
-let lastError = ''
+const SESSION_REFRESH_MS = 5_000
+const FAST_POLL_MS = 5_000
+const FAST_POLL_AFTER_PUSH_MS = 120_000
+const SETTLED_POLL_MS = 60_000
+const COMMAND_TIMEOUT_MS = 20_000
 
-const report = ($: EngineInterface, message: string) => {
-  if (message !== lastError) $.ui.log(`my-mods: ${message}`)
-  lastError = message
-}
+type Step = { name: string; status: string; conclusion: string }
 
-const sh = async ($: EngineInterface, argv: string[], cwd: string) => {
-  const r = await $.process.run(argv, { cwd, timeoutMs: 20_000 })
-  if (r.exitCode === 0) return r.stdout.trim()
-  report($, `${argv.slice(0, 3).join(' ')} exited ${r.exitCode}: ${r.stderr.trim().slice(0, 200)}`)
-  return null
-}
+const githubActionsAtom = atom({ plugin: 'visor', key: 'github-actions' } as const, null)
+const sessionAtom = atom({ plugin: 'visor', key: 'session' } as const, null)
+const clockAtom = atom({ plugin: 'visor', key: 'clock' } as const, null)
 
-const jobsOf = async ($: EngineInterface, id: number, cwd: string): Promise<Job[]> => {
-  const out = await sh($, ['gh', 'run', 'view', String(id), '--json', 'jobs'], cwd)
-  return out ? JSON.parse(out).jobs : []
-}
-
-let lastFetch = 0
-let isBusy = false
-
-const poll = async ($: EngineInterface, isForced = false) => {
-  if (isBusy) return
-  isBusy = true
-  try {
-    const now = await $.clock.now()
-    const prev = await read($, ci)
-    const isSettled = prev !== null && SETTLED.has(prev.state) && !prev.sha
-    if (!isForced && now - lastFetch < (isSettled ? 60_000 : 4_500)) return
-    lastFetch = now
-
-    const cwd = await $.session.cwd()
-    const branch = await sh($, ['git', 'branch', '--show-current'], cwd)
-    if (!branch) {
-      await update($, ci, () => null)
-      return
-    }
-    const head = (await sh($, ['git', 'rev-parse', 'HEAD'], cwd)) ?? ''
-    const out = await sh($, ['gh', 'run', 'list', '--branch', branch, '-L', '50', '--json', 'databaseId,name,status,conclusion,headSha,event'], cwd)
-    if (out === null) return
-
-    const primary = primaryFor(branch)
-    const s = summariseRuns(JSON.parse(out), head, primary)
-    let { state, detail } = s
-    if (s.activeId) {
-      const r = running(await jobsOf($, s.activeId, cwd))
-      if (r.detail) detail = r.detail
-      if (r.isRunning) state = 'running'
-    }
-    if (state === 'queued' && s.blockerId) detail = 'waiting for a previous run to complete'
-    if (state === 'failed' && s.failedId) detail = failure(await jobsOf($, s.failedId, cwd))
-
-    const next: Ci = { branch, state, sha: s.sha, detail, primary, now }
-    await update($, ci, () => next)
-  } catch (err) {
-    report($, err instanceof Error ? err.message : String(err))
-  } finally {
-    isBusy = false
-  }
-}
-
-const refreshBar = async ($: EngineInterface) => {
-  try {
-    const cwd = await $.session.cwd()
-    const [usage, model, branch, diff, now] = await Promise.all([
-      $.session.usage(),
-      $.session.model(),
-      $.process.run(['git', 'branch', '--show-current'], { cwd }),
-      $.process.run(['git', 'diff', '--shortstat', 'HEAD'], { cwd }),
-      $.clock.now(),
-    ])
-    const next: Bar = {
-      branch: branch.exitCode === 0 ? branch.stdout.trim() : '',
-      model: displayModel(model),
-      contextPercent: usage.context.percent ?? null,
-      sessionStartedAt: usage.startedAt,
-      ...(diff.exitCode === 0 ? parseShortstat(diff.stdout) : { added: 0, removed: 0 }),
-      now,
-    }
-    await update($, bar, () => next)
-  } catch (err) {
-    report($, err instanceof Error ? err.message : String(err))
-  }
-}
+let fastPollUntil = 0
+let wakePollLoop = () => {}
 
 export const register: Register = on => {
-  on('session.start', async ($, e, next) => {
-    const started = await next(e)
-    await refreshBar($)
-    void poll($, true)
-    $.clock.every(5_000, () => {
-      void poll($)
-      void refreshBar($)
+  on('session.start', async ($, event, next) => {
+    const result = await next(event)
+
+    await pollSession($)
+    $.clock.every(SESSION_REFRESH_MS, () => void pollSession($))
+
+    $.clock.every(1_000, async () => {
+      const now = await $.clock.now()
+      await update($, clockAtom, () => now)
     })
-    return started
+
+    ;(async () => {
+      while (true) {
+        const wake = new AbortController()
+        wakePollLoop = () => wake.abort()
+
+        const githubResult = await pollGithub($)
+        await update($, githubActionsAtom, () => githubResult)
+
+        const githubActionsRunning = !!githubResult?.status && githubResult.status !== 'completed'
+        const shouldPollFast = githubActionsRunning || (await $.clock.now()) < fastPollUntil
+
+        await $.clock
+          .sleep(shouldPollFast ? FAST_POLL_MS : SETTLED_POLL_MS, { signal: wake.signal })
+          .catch(error => {
+            if (!wake.signal.aborted) throw error
+          })
+      }
+    })().catch(error => {
+      // The plugin unloading aborts the sleep, and with it every call on $: nothing to show then.
+      try {
+        $.ui.toast(`GitHub polling stopped: ${error instanceof Error ? error.message : error}`)
+      } catch {}
+    })
+
+    return result
   })
 
-  on('turn.complete', async ($, e, next) => {
-    const done = await next(e)
-    await refreshBar($)
-    void poll($, true)
-    return done
+  on('tool.call', { tool: 'Bash' }, async ($, event, next) => {
+    const result = await next(event)
+
+    if (POLL_TRIGGER_COMMANDS.test(event.command)) {
+      fastPollUntil = (await $.clock.now()) + FAST_POLL_AFTER_PUSH_MS
+      wakePollLoop()
+    }
+
+    return result
   })
 
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const ran = await next(e)
-    if (TRIGGERS.test(e.command)) void poll($, true)
-    return ran
-  })
+  on('ui.render', { component: 'PromptHint' }, async ($, event, next) => {
+    const hint = await next(event)
 
-  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    const hint = await next(e)
-    const line = await read($, bar)
-    const elements = $.ui.resolve(e)
+    const session = await read($, sessionAtom)
+    const elements = $.ui.resolve(event)
     const Client = 'Client' in elements ? elements.Client : undefined
-    if (line === null || !Client) return hint
+
+    if (session === null || !Client) return hint
 
     const { Box } = elements
-    const status = await read($, ci)
+    const actions = await read($, githubActionsAtom)
+    const now = await read($, clockAtom)
 
     return (
       <Box flexDirection="column">
         {hint}
-        <Client key="statusline" module="./statusline.tsx" width="100%" props={{ ...line, ci: status }} />
+        <Client
+          key="visor"
+          module="./component.tsx"
+          width="100%"
+          props={{ ...session, actions, now }}
+        />
       </Box>
     )
   })
+}
+
+const pollSession = async ($: EngineInterface) => {
+  const cwd = await $.session.cwd()
+
+  const [usage, modelId, branch, shortstat] = await Promise.all([
+    $.session.usage(),
+    $.session.model(),
+    $.process.run(CURRENT_BRANCH_COMMAND, { cwd }),
+    $.process.run(['git', 'diff', '--shortstat', 'HEAD'], { cwd }),
+  ])
+
+  const session: SessionInfo = {
+    branch: branch.exitCode === 0 ? branch.stdout.trim() : '',
+    model: formatModelName(modelId),
+    contextPercent: usage.context.percent ?? null,
+    sessionStartedAt: usage.startedAt,
+    ...(shortstat.exitCode === 0 ? parseShortstat(shortstat.stdout) : { added: 0, removed: 0 }),
+  }
+
+  await update($, sessionAtom, () => session)
+}
+
+const pollGithub = async ($: EngineInterface): Promise<GithubActionsStatus | null> => {
+  const shown = await read($, githubActionsAtom)
+
+  try {
+    const cwd = await $.session.cwd()
+    const options = { cwd, timeoutMs: COMMAND_TIMEOUT_MS }
+    const branch = await $.process.run(CURRENT_BRANCH_COMMAND, options)
+    const branchName = branch.exitCode === 0 ? branch.stdout.trim() : ''
+
+    if (!branchName) return null
+
+    const CIWorkflow = branchName === 'main' ? 'Pipeline' : 'Deploy CI Environment'
+
+    const ghRunListResult = await $.process.run(
+      [
+        'gh',
+        'run',
+        'list',
+        '--branch',
+        branchName,
+        '--workflow',
+        CIWorkflow,
+        '-L',
+        '1',
+        '--json',
+        'databaseId,status,conclusion',
+      ],
+      options
+    )
+
+    if (ghRunListResult.exitCode !== 0) {
+      return { branch: branchName, error: ghRunListResult.stderr.trim() }
+    }
+
+    const [latestRun]: { databaseId: number; status: string; conclusion: string }[] = JSON.parse(
+      ghRunListResult.stdout
+    )
+
+    if (!latestRun) return { branch: branchName }
+
+    const { status, conclusion } = latestRun
+
+    if (status === 'completed' && !FAILING_CONCLUSIONS.has(conclusion)) {
+      return { branch: branchName, status, conclusion }
+    }
+
+    const ghRunViewResult = await $.process.run(
+      ['gh', 'run', 'view', String(latestRun.databaseId), '--json', 'jobs'],
+      options
+    )
+
+    const { jobs }: { jobs: (Step & { steps?: Step[] })[] } =
+      ghRunViewResult.exitCode === 0 ? JSON.parse(ghRunViewResult.stdout) : { jobs: [] }
+
+    const job = jobs.find(
+      job => job.status === 'in_progress' || FAILING_CONCLUSIONS.has(job.conclusion)
+    )
+    const step = job?.steps?.find(
+      step => step.status === 'in_progress' || FAILING_CONCLUSIONS.has(step.conclusion)
+    )
+
+    return {
+      branch: branchName,
+      status,
+      conclusion,
+      detail: [job?.name, step?.name].filter(Boolean).join(' › '),
+    }
+  } catch (error) {
+    $.ui.toast(`GitHub poll failed: ${error instanceof Error ? error.message : error}`)
+    return shown
+  }
+}
+
+export const parseShortstat = (output: string) => ({
+  added: Number(/(\d+) insertion/.exec(output)?.[1] ?? 0),
+  removed: Number(/(\d+) deletion/.exec(output)?.[1] ?? 0),
+})
+
+export const formatModelName = (modelId: string) => {
+  const withoutSuffix = modelId.replace(/\[.*\]$/, '')
+  const match = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(withoutSuffix)
+
+  if (!match) return modelId
+
+  const [, family = '', major, minor] = match
+
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${major}.${minor}`
 }

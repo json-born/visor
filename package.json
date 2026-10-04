@@ -1,0 +1,15 @@
+{
+  "name": "visor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "biome check .",
+    "fix": "biome check --write .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "claude plugin test ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "typescript": "^7.0.2"
+  }
+}

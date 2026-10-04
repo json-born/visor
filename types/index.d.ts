@@ -1,26 +1,29 @@
-export type CiState = 'checking' | 'none' | 'queued' | 'running' | 'failed' | 'partial' | 'passed' | 'cancelled'
-
-export type Ci = {
+export type GithubActionsStatus = {
   branch: string
-  state: CiState
-  sha: string
-  detail: string
-  primary: string
-  now: number
+  // The newest run of the CI workflow, as gh reports it; unset when there isn't one.
+  status?: string
+  conclusion?: string
+  // "<job> › <step>" for what's running now, or what failed.
+  detail?: string
+  // What gh said when it couldn't list the workflow's runs.
+  error?: string
 }
 
-export type Bar = {
+export type SessionInfo = {
   branch: string
   model: string
   contextPercent: number | null
   sessionStartedAt: number
   added: number
   removed: number
-  now: number
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'my-mods': { ci: Ci | null; bar: Bar | null }
+    visor: {
+      'github-actions': GithubActionsStatus | null
+      session: SessionInfo | null
+      clock: number | null
+    }
   }
 }
