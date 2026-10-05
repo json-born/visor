@@ -96,7 +96,7 @@ const Visor: ClientModule<Props, { frame: number }> = (props, surface) => {
     props.expanded && props.ci?.others.length
       ? [
           ...buildHeading(colour, surface.columns),
-          ...buildRows(props.ci, props.now, frame, colour, surface.columns),
+          ...buildCIRunTable(props.ci, props.now, frame, colour, surface.columns),
         ]
       : []
 
@@ -184,7 +184,6 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
 
 const spinnerAt = (frame: number) => SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? ''
 
-// Until the poll catches up with a branch switch, the segment says it's checking.
 const buildCurrentSpans = (run: CIRun, branch: string, frame: number, colour: Theme): Span[] =>
   run.branch === branch
     ? buildRunSpans(run, frame, colour)
@@ -279,7 +278,7 @@ export const buildHeading = (colour: Theme, columns: number): Span[][] => {
   ]
 }
 
-export const buildRows = (
+export const buildCIRunTable = (
   ci: CIRuns,
   now: number | null,
   frame: number,

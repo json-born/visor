@@ -2,8 +2,8 @@ import { expect, test } from 'claude-code/testing'
 
 import type { CIRun, CIRuns } from '../types'
 import {
+  buildCIRunTable,
   buildHeading,
-  buildRows,
   buildSections,
   findCISegment,
   formatAge,
@@ -153,7 +153,7 @@ test('lists the current branch first, then other branches with aligned columns',
   const row = (marker: string, branch: string, workflow: string, state: string, age: string) =>
     `${marker}${branch.padEnd(BRANCH.length)}  ${workflow.padEnd(6)}  ${state.padEnd(29)}  ${age}`
 
-  expect(text(buildRows(withOthers(OTHERS), props.now, 0, COLOURS, 0))).toEqual([
+  expect(text(buildCIRunTable(withOthers(OTHERS), props.now, 0, COLOURS, 0))).toEqual([
     row('     ', BRANCH, 'CI', '⠁ build › unit tests', '2m'),
     row('     ', 'fix/token-refresh', 'CI', '\uf057 failed › lint › biome check', '14m'),
     row('     ', 'chore/deps', 'CI', '\uf252 queued', '3m'),
@@ -162,7 +162,7 @@ test('lists the current branch first, then other branches with aligned columns',
 })
 
 test('truncates expanded rows to fit the width', () => {
-  const rows = text(buildRows(withOthers(OTHERS), props.now, 0, COLOURS, 40))
+  const rows = text(buildCIRunTable(withOthers(OTHERS), props.now, 0, COLOURS, 40))
 
   expect(rows.every(row => [...row].length <= 40)).toBe(true)
   expect(rows.every(row => row.endsWith('…'))).toBe(true)
