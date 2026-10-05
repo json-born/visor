@@ -1,7 +1,14 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { CIRun, CIRuns } from '../types'
-import { buildRows, buildSections, findCISegment, formatAge, wrapSections } from './component'
+import {
+  buildHeading,
+  buildRows,
+  buildSections,
+  findCISegment,
+  formatAge,
+  wrapSections,
+} from './component'
 
 const BRANCH = 'feat/teardown-teams-alert'
 
@@ -147,7 +154,7 @@ test('lists the current branch first, then other branches with aligned columns',
     `${marker}${branch.padEnd(BRANCH.length)}  ${workflow.padEnd(6)}  ${state.padEnd(29)}  ${age}`
 
   expect(text(buildRows(withOthers(OTHERS), props.now, 0, COLOURS, 0))).toEqual([
-    row('   ● ', BRANCH, 'CI', '⠁ build › unit tests', '2m'),
+    row('     ', BRANCH, 'CI', '⠁ build › unit tests', '2m'),
     row('     ', 'fix/token-refresh', 'CI', '\uf057 failed › lint › biome check', '14m'),
     row('     ', 'chore/deps', 'CI', '\uf252 queued', '3m'),
     row('     ', 'main', 'Deploy', '\uf058 passed', '1h'),
@@ -181,4 +188,9 @@ test('finds where the CI segment sits on its line', () => {
   expect(
     findCISegment(wrapSections(buildSections({ ...props, ci: null }, 0), 0, [' | ', '']))
   ).toBeUndefined()
+})
+
+test('titles the expanded view with a rule across the rest of the width', () => {
+  expect(text(buildHeading(COLOURS, 20))).toEqual([' ', `   CI runs ${'─'.repeat(9)}`])
+  expect(text(buildHeading(COLOURS, 0))).toEqual([' ', '   CI runs '])
 })

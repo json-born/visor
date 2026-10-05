@@ -91,7 +91,10 @@ const Visor: ClientModule<Props, { frame: number }> = (props, surface) => {
   ciSegment = findCISegment(lines)
   const rows =
     props.expanded && props.ci?.others.length
-      ? buildRows(props.ci, props.now, frame, colour, surface.columns)
+      ? [
+          ...buildHeading(colour, surface.columns),
+          ...buildRows(props.ci, props.now, frame, colour, surface.columns),
+        ]
       : []
 
   return (
@@ -238,6 +241,19 @@ export const formatAge = (ms: number) => {
   return `${minutes}m`
 }
 
+// A blank row, then the title with a rule across the rest of the width.
+export const buildHeading = (colour: Theme, columns: number): Span[][] => {
+  const title = '   CI runs '
+
+  return [
+    [[' ']],
+    [
+      [title, colour.comment],
+      ['─'.repeat(Math.max(0, columns - [...title].length)), colour.dark],
+    ],
+  ]
+}
+
 // The current branch first, then the user's other branches.
 export const buildRows = (
   ci: CIRuns,
@@ -258,7 +274,7 @@ export const buildRows = (
 
     return truncate(
       [
-        [index === 0 ? '   ● ' : '     ', colour.comment],
+        ['     ', undefined],
         [pad(run.branch, branchWidth), index === 0 ? colour.fg : colour.muted],
         ['  ', undefined],
         [pad(run.workflow ?? '', workflowWidth), colour.comment],

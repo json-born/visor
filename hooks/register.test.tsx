@@ -503,7 +503,7 @@ test(
     await toggleCI($)
     await ui.post({ toggle: 'ci' })
 
-    expect(await statusText(ui)).not.toMatch(/●/)
+    expect(await statusText(ui)).not.toMatch(/CI runs/)
     expect(await toggleCI($)).toMatchObject({ text: 'No other branches to expand.' })
   }
 )
