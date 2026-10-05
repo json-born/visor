@@ -34,7 +34,7 @@ const run = (fields: object) => ({
 const MINUTE = 60_000
 const NOON = Date.UTC(2026, 9, 5, 12)
 
-const listed = (branch: string, minutesAgo: number, fields: object = {}) => ({
+const listedRun = (branch: string, minutesAgo: number, fields: object = {}) => ({
   databaseId: minutesAgo,
   headBranch: branch,
   workflowName: 'Deploy CI Environment',
@@ -272,7 +272,7 @@ test(
   'lists other branches owned by user, capped at 6, descending order',
   { options: CI_OPTIONS },
   async ($, on) => {
-    const branches = [1, 2, 3, 4, 5, 6, 7, 8].map(n => listed(`feat/b${n}`, n * 10))
+    const branches = [1, 2, 3, 4, 5, 6, 7, 8].map(n => listedRun(`feat/b${n}`, n * 10))
     const mocks = mockEngine(on, mine(branches.reverse()))
 
     await $.session.start(SESSION_START)
@@ -296,10 +296,10 @@ test(
     const mocks = mockEngine(
       on,
       mine([
-        listed('main', 1, { workflowName: 'Deploy CI Environment' }),
-        listed('main', 2, { workflowName: 'Pipeline' }),
-        listed('feat/other-workflow', 3, { workflowName: 'Pipeline' }),
-        listed('feat/y', 4),
+        listedRun('main', 1, { workflowName: 'Deploy CI Environment' }),
+        listedRun('main', 2, { workflowName: 'Pipeline' }),
+        listedRun('feat/other-workflow', 3, { workflowName: 'Pipeline' }),
+        listedRun('feat/y', 4),
       ])
     )
 
@@ -319,7 +319,7 @@ test(
   'leaves the current branch out of the other branches',
   { options: CI_OPTIONS },
   async ($, on) => {
-    const mocks = mockEngine(on, mine([listed('feat/x', 1), listed('feat/y', 2)]))
+    const mocks = mockEngine(on, mine([listedRun('feat/x', 1), listedRun('feat/y', 2)]))
 
     await $.session.start(SESSION_START)
     await mocks.clock.settle()
@@ -333,7 +333,7 @@ test(
   'shows no badge when there are no other branches with runs',
   { options: CI_OPTIONS },
   async ($, on) => {
-    const mocks = mockEngine(on, mine([listed('feat/x', 1)]))
+    const mocks = mockEngine(on, mine([listedRun('feat/x', 1)]))
 
     await $.session.start(SESSION_START)
     await mocks.clock.settle()
@@ -357,7 +357,7 @@ test(
       },
     ]
     const mocks = mockEngine(on, {
-      ...mine([listed('feat/y', 5, { conclusion: 'failure', databaseId: 21 })]),
+      ...mine([listedRun('feat/y', 5, { conclusion: 'failure', databaseId: 21 })]),
       'gh run view 21': JSON.stringify({ jobs }),
     })
 
@@ -374,7 +374,7 @@ test(
   'keeps showing other branches when listing them fails',
   { options: CI_OPTIONS },
   async ($, on) => {
-    const stdout = mine([listed('feat/y', 5)]) as Record<string, string | null>
+    const stdout = mine([listedRun('feat/y', 5)]) as Record<string, string | null>
     const mocks = mockEngine(on, stdout)
 
     await $.session.start(SESSION_START)
@@ -395,7 +395,7 @@ test(
   async ($, on) => {
     const mocks = mockEngine(
       on,
-      mine([listed('feat/y', 5, { status: 'in_progress', conclusion: '' })])
+      mine([listedRun('feat/y', 5, { status: 'in_progress', conclusion: '' })])
     )
 
     await $.session.start(SESSION_START)
@@ -411,7 +411,7 @@ test(
   'toggles the expanded view from /visor ci and from a message posted by the status line',
   { options: CI_OPTIONS },
   async ($, on) => {
-    const mocks = mockEngine(on, mine([listed('feat/y', 5)]))
+    const mocks = mockEngine(on, mine([listedRun('feat/y', 5)]))
 
     await $.session.start(SESSION_START)
     await mocks.clock.settle()
@@ -468,7 +468,7 @@ test(
   'toggles when the CI segment is clicked and ignores clicks elsewhere',
   { options: CI_OPTIONS },
   async ($, on) => {
-    const mocks = mockEngine(on, mine([listed('feat/y', 5)]))
+    const mocks = mockEngine(on, mine([listedRun('feat/y', 5)]))
 
     await $.session.start(SESSION_START)
     await mocks.clock.settle()
@@ -494,7 +494,7 @@ test(
   'does not expand when there are no other branches to show',
   { options: CI_OPTIONS },
   async ($, on) => {
-    const mocks = mockEngine(on, mine([listed('feat/x', 1)]))
+    const mocks = mockEngine(on, mine([listedRun('feat/x', 1)]))
 
     await $.session.start(SESSION_START)
     await mocks.clock.settle()
@@ -505,5 +505,39 @@ test(
 
     expect(await statusText(ui)).not.toMatch(/CI runs/)
     expect(await toggleCI($)).toMatchObject({ text: 'No other branches to expand.' })
+  }
+)
+
+test(
+  'keeps showing the current run when its job details are unreadable',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(on, {
+      ...mine([]),
+      'gh run list --branch': JSON.stringify([
+        run({ databaseId: 7, status: 'in_progress', conclusion: '' }),
+      ]),
+      'gh run view 7': 'not json',
+    })
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+
+    expect(await statusText(await $.ui.mount(PROMPT_HINT))).toMatch(/running/)
+    expect(mocks.toasts).toEqual([])
+  }
+)
+
+test(
+  'keeps showing the current run when other branches are unreadable',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(on, { ...mine([]), 'gh run list --user': 'not json' })
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+
+    expect(await statusText(await $.ui.mount(PROMPT_HINT))).toMatch(/passed/)
+    expect(mocks.toasts).toEqual([])
   }
 )

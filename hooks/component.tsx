@@ -4,6 +4,9 @@ import type { CIRun, CIRuns, SessionInfo } from '../types'
 
 export const FAILING_CONCLUSIONS = new Set(['failure', 'timed_out', 'startup_failure'])
 
+// What the status line posts and `/visor` takes to expand or collapse the CI view.
+export const CI_VIEW = 'ci'
+
 const FRAME_MS = 80
 const PROGRESS_CELLS = 10
 // The blank row above the rule, then the rule itself, sit above the first line.
@@ -79,7 +82,7 @@ const Visor: ClientModule<Props, { frame: number }> = (props, surface) => {
         event.x >= segment.from &&
         event.x < segment.to
       ) {
-        surface.post({ toggle: 'ci' })
+        surface.post({ toggle: CI_VIEW })
       }
     })
   }
@@ -155,7 +158,7 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
     props.ci
       ? [
           [`${ICON.actions}  `, colour.comment],
-          ...buildRunSpans(props.ci.current, props.branch, frame, colour),
+          ...buildCurrentSpans(props.ci.current, props.branch, frame, colour),
           ...buildBadge(props.ci.others.length, props.expanded, colour),
         ]
       : [],
@@ -164,11 +167,17 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
   return sections.filter(section => section.length > 0)
 }
 
-const buildRunSpans = (run: CIRun, branch: string, frame: number, colour: Theme): Span[] => {
-  const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? ''
-  const { status, conclusion = '', detail } = run
+const spinnerAt = (frame: number) => SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? ''
 
-  if (run.branch !== branch) return [[`${spinner} checking…`, colour.comment]]
+// Until the poll catches up with a branch switch, the segment says it's checking.
+const buildCurrentSpans = (run: CIRun, branch: string, frame: number, colour: Theme): Span[] =>
+  run.branch === branch
+    ? buildRunSpans(run, frame, colour)
+    : [[`${spinnerAt(frame)} checking…`, colour.comment]]
+
+const buildRunSpans = (run: CIRun, frame: number, colour: Theme): Span[] => {
+  const spinner = spinnerAt(frame)
+  const { status, conclusion = '', detail } = run
 
   if (!status) return [[`${ICON.none} no runs`, colour.muted]]
 
@@ -206,10 +215,11 @@ const buildRunSpans = (run: CIRun, branch: string, frame: number, colour: Theme)
 const buildBadge = (count: number, expanded: boolean, colour: Theme): Span[] =>
   count > 0 ? [[`  ${expanded ? '▾' : '▸'} ${count}`, colour.comment]] : []
 
-const spanWidth = (spans: Span[]) => spans.reduce((total, [text]) => total + [...text].length, 0)
+const textWidth = (text: string) => [...text].length
 
-const pad = (text: string, width: number) =>
-  text + ' '.repeat(Math.max(0, width - [...text].length))
+const spanWidth = (spans: Span[]) => spans.reduce((total, [text]) => total + textWidth(text), 0)
+
+const pad = (text: string, width: number) => text + ' '.repeat(Math.max(0, width - textWidth(text)))
 
 const truncate = (spans: Span[], columns: number): Span[] => {
   if (columns <= 0 || spanWidth(spans) <= columns) return spans
@@ -241,7 +251,6 @@ export const formatAge = (ms: number) => {
   return `${minutes}m`
 }
 
-// A blank row, then the title with a rule across the rest of the width.
 export const buildHeading = (colour: Theme, columns: number): Span[][] => {
   const title = '   CI runs '
 
@@ -249,7 +258,7 @@ export const buildHeading = (colour: Theme, columns: number): Span[][] => {
     [[' ']],
     [
       [title, colour.comment],
-      ['─'.repeat(Math.max(0, columns - [...title].length)), colour.dark],
+      ['─'.repeat(Math.max(0, columns - textWidth(title))), colour.dark],
     ],
   ]
 }
@@ -263,9 +272,9 @@ export const buildRows = (
   columns: number
 ): Span[][] => {
   const runs = [ci.current, ...ci.others]
-  const state = (run: CIRun) => buildRunSpans(run, run.branch, frame, colour)
-  const branchWidth = Math.max(...runs.map(run => [...run.branch].length))
-  const workflowWidth = Math.max(...runs.map(run => [...(run.workflow ?? '')].length))
+  const state = (run: CIRun) => buildRunSpans(run, frame, colour)
+  const branchWidth = Math.max(...runs.map(run => textWidth(run.branch)))
+  const workflowWidth = Math.max(...runs.map(run => textWidth(run.workflow ?? '')))
   const stateWidth = Math.max(...runs.map(run => spanWidth(state(run))))
 
   return runs.map((run, index) => {
@@ -299,10 +308,11 @@ export const findCISegment = (lines: Span[][]): Segment | undefined => {
       return { line, from, to: from + spanWidth(spans.slice(start)) }
     }
   }
+
+  return undefined
 }
 
 export const wrapSections = (sections: Span[][], columns: number, separator: Span): Span[][] => {
-  const width = (spans: Span[]) => spans.reduce((total, [text]) => total + [...text].length, 0)
   const lines: Span[][] = []
 
   for (const section of sections) {
@@ -310,7 +320,7 @@ export const wrapSections = (sections: Span[][], columns: number, separator: Spa
 
     if (
       lastLine &&
-      (columns <= 0 || width(lastLine) + width([separator]) + width(section) <= columns)
+      (columns <= 0 || spanWidth(lastLine) + spanWidth([separator]) + spanWidth(section) <= columns)
     ) {
       lastLine.push(separator, ...section)
     } else {

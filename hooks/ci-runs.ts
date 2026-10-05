@@ -8,7 +8,7 @@ export const OTHER_BRANCHES_LISTED = 30
 
 const OTHER_BRANCHES_SHOWN = 6
 
-type Config = Record<string, unknown>
+export type Config = Record<string, unknown>
 
 type Step = { name: string; status: string; conclusion: string }
 
@@ -49,7 +49,11 @@ export const toRun = (branch: string, run: Omit<ListedRun, 'headBranch'>): CIRun
 })
 
 // Which of the user's runs to show: the newest per other branch, on that branch's workflow.
-export const pickOthers = (listed: ListedRun[], currentBranch: string, config: Config): CIRun[] =>
+export const latestRunsOnOtherBranches = (
+  listed: ListedRun[],
+  currentBranch: string,
+  config: Config
+): CIRun[] =>
   latestPerBranch(
     listed
       .filter(
@@ -60,18 +64,18 @@ export const pickOthers = (listed: ListedRun[], currentBranch: string, config: C
       .map(run => toRun(run.headBranch, run))
   ).slice(0, OTHER_BRANCHES_SHOWN)
 
+export const isRunning = (run: CIRun) => !!run.status && run.status !== 'completed'
+
 export const isFinishedWell = (run: CIRun) =>
   run.status === 'completed' && !FAILING_CONCLUSIONS.has(run.conclusion ?? '')
 
+const isActiveOrFailed = (step: Step) =>
+  step.status === 'in_progress' || FAILING_CONCLUSIONS.has(step.conclusion)
+
 // "<job> › <step>" for what's running now, or what failed.
 export const describeProgress = (jobs: Job[]) => {
-  const job = jobs.find(
-    job => job.status === 'in_progress' || FAILING_CONCLUSIONS.has(job.conclusion)
-  )
-
-  const step = job?.steps?.find(
-    step => step.status === 'in_progress' || FAILING_CONCLUSIONS.has(step.conclusion)
-  )
+  const job = jobs.find(isActiveOrFailed)
+  const step = job?.steps?.find(isActiveOrFailed)
 
   return [job?.name, step?.name].filter(Boolean).join(' › ')
 }

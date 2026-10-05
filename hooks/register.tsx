@@ -1,16 +1,18 @@
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import type { CIRun, CIRuns, SessionInfo } from '../types'
-import type { Job, ListedRun } from './ci-runs'
+import type { Config, Job, ListedRun } from './ci-runs'
 import {
   describeProgress,
   isFinishedWell,
+  isRunning,
+  latestRunsOnOtherBranches,
   OTHER_BRANCHES_LISTED,
-  pickOthers,
   toRun,
   workflowFor,
 } from './ci-runs'
 import type { ThemeName } from './component'
+import { CI_VIEW } from './component'
 
 export const POLL_TRIGGER_COMMANDS =
   /\bgit\s+push\b|\bgh\s+(run\s+rerun|workflow\s+run|pr\s+create)\b/
@@ -28,10 +30,12 @@ const ciExpandedAtom = atom({ plugin: 'visor', key: 'ci-expanded' } as const, fa
 const sessionAtom = atom({ plugin: 'visor', key: 'session' } as const, null)
 const clockAtom = atom({ plugin: 'visor', key: 'clock' } as const, null)
 
+const RUN_FIELDS = 'databaseId,headBranch,workflowName,status,conclusion,updatedAt'
+
 type RunOptions = { cwd: string; timeoutMs: number }
 
-let config: Record<string, unknown> = {}
-let login: string | undefined
+let config: Config = {}
+let cachedLogin: string | undefined
 let fastPollUntil = 0
 let wakePollLoop = () => {}
 
@@ -44,7 +48,7 @@ export const register: Register = (on, pluginOptions) => {
     await $.command.register({
       name: 'visor',
       description: 'Control the visor status line',
-      argumentHint: 'ci',
+      argumentHint: CI_VIEW,
     })
 
     await pollSession($)
@@ -95,7 +99,7 @@ export const register: Register = (on, pluginOptions) => {
   on('ui.message', async ($, event, next) => {
     const { data } = event
 
-    if (typeof data === 'object' && data !== null && 'toggle' in data && data.toggle === 'ci') {
+    if (typeof data === 'object' && data !== null && 'toggle' in data && data.toggle === CI_VIEW) {
       await toggleCIView($)
       return {}
     }
@@ -104,7 +108,7 @@ export const register: Register = (on, pluginOptions) => {
   })
 
   on('command.run', { command: 'visor' }, async ($, event) => {
-    if (event.args.trim() !== 'ci') return { text: 'Usage: /visor ci' }
+    if (event.args.trim() !== CI_VIEW) return { text: `Usage: /visor ${CI_VIEW}` }
 
     const result = await toggleCIView($)
 
@@ -169,8 +173,6 @@ const toggleCIView = async ($: EngineInterface): Promise<'expanded' | 'collapsed
   return expanded ? 'expanded' : hasOthers ? 'collapsed' : 'nothing'
 }
 
-const isRunning = (run: CIRun) => !!run.status && run.status !== 'completed'
-
 const pollCIRuns = async ($: EngineInterface): Promise<CIRuns | null> => {
   const shown = await read($, ciRunsAtom)
 
@@ -187,7 +189,9 @@ const pollCIRuns = async ($: EngineInterface): Promise<CIRuns | null> => {
     if (!workflow) return null
 
     const [current, others] = await Promise.all([
-      fetchCurrent($, branchName, workflow, options).then(run => addDetail($, run, options)),
+      fetchCurrent($, branchName, workflow, options).then(run =>
+        addDetail($, run, options).catch(() => run)
+      ),
       fetchOthers($, branchName, options),
     ])
 
@@ -209,7 +213,7 @@ const fetchCurrent = async (
   workflow: string,
   options: RunOptions
 ): Promise<CIRun> => {
-  const listed = await $.process.run(
+  const listing = await $.process.run(
     [
       'gh',
       'run',
@@ -221,14 +225,14 @@ const fetchCurrent = async (
       '-L',
       '1',
       '--json',
-      'databaseId,workflowName,status,conclusion,updatedAt',
+      RUN_FIELDS,
     ],
     options
   )
 
-  if (listed.exitCode !== 0) return { branch, error: listed.stderr.trim() }
+  if (listing.exitCode !== 0) return { branch, error: listing.stderr.trim() }
 
-  const [latest]: Omit<ListedRun, 'headBranch'>[] = JSON.parse(listed.stdout)
+  const [latest]: Omit<ListedRun, 'headBranch'>[] = JSON.parse(listing.stdout)
 
   return latest ? toRun(branch, latest) : { branch }
 }
@@ -240,32 +244,36 @@ const fetchOthers = async (
   branch: string,
   options: RunOptions
 ): Promise<CIRun[] | null> => {
-  if (login === undefined) {
+  if (cachedLogin === undefined) {
     const whoami = await $.process.run(['gh', 'api', 'user', '-q', '.login'], options)
 
     if (whoami.exitCode !== 0 || !whoami.stdout.trim()) return null
 
-    login = whoami.stdout.trim()
+    cachedLogin = whoami.stdout.trim()
   }
 
-  const listed = await $.process.run(
+  const listing = await $.process.run(
     [
       'gh',
       'run',
       'list',
       '--user',
-      login,
+      cachedLogin,
       '-L',
       String(OTHER_BRANCHES_LISTED),
       '--json',
-      'databaseId,headBranch,workflowName,status,conclusion,updatedAt',
+      RUN_FIELDS,
     ],
     options
   )
 
-  if (listed.exitCode !== 0) return null
+  if (listing.exitCode !== 0) return null
 
-  return pickOthers(JSON.parse(listed.stdout), branch, config)
+  try {
+    return latestRunsOnOtherBranches(JSON.parse(listing.stdout), branch, config)
+  } catch {
+    return null
+  }
 }
 
 const addDetail = async ($: EngineInterface, run: CIRun, options: RunOptions): Promise<CIRun> => {
