@@ -263,7 +263,6 @@ export const buildHeading = (colour: Theme, columns: number): Span[][] => {
   ]
 }
 
-// The current branch first, then the user's other branches.
 export const buildRows = (
   ci: CIRuns,
   now: number | null,

@@ -48,7 +48,6 @@ export const toRun = (branch: string, run: Omit<ListedRun, 'headBranch'>): CIRun
   updatedAt: Date.parse(run.updatedAt),
 })
 
-// Which of the user's runs to show: the newest per other branch, on that branch's workflow.
 export const latestRunsOnOtherBranches = (
   listed: ListedRun[],
   currentBranch: string,
