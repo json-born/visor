@@ -85,16 +85,15 @@ export default Visor
 
 export const buildSections = (props: Props, frame: number): Span[][] => {
   const colour = THEMES[props.theme]
-  const { contextPercent } = props
+  const contextPercent = props.contextPercent ?? 0
 
   const contextColour =
-    contextPercent === null || contextPercent < 50
+    contextPercent < 50
       ? colour.green
       : contextPercent < 80
         ? colour.yellow
         : colour.red
-  const filledCells =
-    contextPercent === null ? 0 : Math.round((contextPercent * PROGRESS_CELLS) / 100)
+  const filledCells = Math.round((contextPercent * PROGRESS_CELLS) / 100)
 
   const elapsedMs = (props.now ?? props.sessionStartedAt) - props.sessionStartedAt
   const minutes = Math.max(0, Math.floor(elapsedMs / 60_000))
@@ -114,24 +113,18 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
       [`${ICON.model}  `, colour.comment],
       [props.model, colour.muted],
     ],
-    contextPercent !== null
-      ? [
-          [`${ICON.context}  `, colour.comment],
-          ['█'.repeat(filledCells), contextColour],
-          ['░'.repeat(PROGRESS_CELLS - filledCells), colour.dark],
-          [` ${contextPercent}%`, contextColour],
-        ]
-      : [],
+    [
+      [`${ICON.context}  `, colour.comment],
+      ['█'.repeat(filledCells), contextColour],
+      ['░'.repeat(PROGRESS_CELLS - filledCells), colour.dark],
+      [` ${contextPercent}%`, contextColour],
+    ],
     [
       [`${ICON.clock}  `, colour.comment],
       [sessionTime, colour.muted],
-      ...(props.added || props.removed
-        ? ([
-            [` +${props.added}`, colour.green],
-            ['/', colour.comment],
-            [`-${props.removed}`, colour.red],
-          ] as Span[])
-        : []),
+      [` +${props.added}`, colour.green],
+      ['/', colour.comment],
+      [`-${props.removed}`, colour.red],
     ],
     props.actions
       ? [

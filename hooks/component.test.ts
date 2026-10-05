@@ -8,9 +8,9 @@ const BRANCH = 'feat/teardown-teams-alert'
 const props = {
   branch: BRANCH,
   model: 'Opus 5.5',
-  contextPercent: 42,
+  contextPercent: 42 as number | null,
   sessionStartedAt: 0,
-  now: 104 * 60_000,
+  now: 104 * 60_000 as number | null,
   theme: 'Tokyo Night' as const,
   added: 12,
   removed: 3,
@@ -42,6 +42,14 @@ test('status line collapses cleanly as it narrows', () => {
 test('renders correctly', () => {
   expect(render()).toEqual([
     `\ue725  ${BRANCH} | \uf2db  Opus 5.5 | \uf1c0  ████░░░░░░ 42% | \uf017  1h44m +12/-3 | \uf52e  \uf057 failed › terraform apply`,
+  ])
+})
+
+test('renders the initial state correctly', () => {
+  expect(
+    render({ branch: '', contextPercent: null, now: null, added: 0, removed: 0, actions: null })
+  ).toEqual([
+    `\uf2db  Opus 5.5 | \uf1c0  ░░░░░░░░░░ 0% | \uf017  0m +0/-0`,
   ])
 })
 
