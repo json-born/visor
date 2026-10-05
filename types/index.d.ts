@@ -1,9 +1,7 @@
 export type CIRun = {
   branch: string
-  // The run's id, for looking up its jobs; unset when there isn't a run.
   id?: number
   workflow?: string
-  // The newest run of the CI workflow, as gh reports it; unset when there isn't one.
   status?: string
   conclusion?: string
   // "<job> › <step>" for what's running now, or what failed.
@@ -16,7 +14,7 @@ export type CIRun = {
 
 export type CIRuns = {
   current: CIRun
-  // The newest run on each of the user's other branches, newest first.
+  // The latest run on each of the user's other branches, newest first.
   others: CIRun[]
 }
 

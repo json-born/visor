@@ -63,11 +63,6 @@ export const latestRunsOnOtherBranches = (
       .map(run => toRun(run.headBranch, run))
   ).slice(0, OTHER_BRANCHES_SHOWN)
 
-export const isRunning = (run: CIRun) => !!run.status && run.status !== 'completed'
-
-export const isFinishedWell = (run: CIRun) =>
-  run.status === 'completed' && !FAILING_CONCLUSIONS.has(run.conclusion ?? '')
-
 const isActiveOrFailed = (step: Step) =>
   step.status === 'in_progress' || FAILING_CONCLUSIONS.has(step.conclusion)
 

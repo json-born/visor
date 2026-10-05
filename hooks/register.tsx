@@ -4,15 +4,13 @@ import type { CIRun, CIRuns, SessionInfo } from '../types'
 import type { Config, Job, ListedRun } from './ci-runs'
 import {
   describeProgress,
-  isFinishedWell,
-  isRunning,
   latestRunsOnOtherBranches,
   OTHER_BRANCHES_LISTED,
   toRun,
   workflowFor,
 } from './ci-runs'
 import type { ThemeName } from './component'
-import { CI_VIEW } from './component'
+import { CI_VIEW, FAILING_CONCLUSIONS } from './component'
 
 export const POLL_TRIGGER_COMMANDS =
   /\bgit\s+push\b|\bgh\s+(run\s+rerun|workflow\s+run|pr\s+create)\b/
@@ -67,7 +65,9 @@ export const register: Register = (on, pluginOptions) => {
         const ciRuns = await pollCIRuns($)
         await update($, ciRunsAtom, () => ciRuns)
 
-        const ciRunning = !!ciRuns && [ciRuns.current, ...ciRuns.others].some(isRunning)
+        const ciRunning =
+          !!ciRuns &&
+          [ciRuns.current, ...ciRuns.others].some(run => !!run.status && run.status !== 'completed')
         const shouldPollFast = ciRunning || (await $.clock.now()) < fastPollUntil
 
         await $.clock
@@ -277,12 +277,12 @@ const fetchOthers = async (
 }
 
 const addDetail = async ($: EngineInterface, run: CIRun, options: RunOptions): Promise<CIRun> => {
-  if (run.id === undefined || isFinishedWell(run)) return run
+  const { id, status, conclusion = '' } = run
 
-  const viewed = await $.process.run(
-    ['gh', 'run', 'view', String(run.id), '--json', 'jobs'],
-    options
-  )
+  if (id === undefined || (status === 'completed' && !FAILING_CONCLUSIONS.has(conclusion)))
+    return run
+
+  const viewed = await $.process.run(['gh', 'run', 'view', String(id), '--json', 'jobs'], options)
 
   const { jobs }: { jobs: Job[] } = viewed.exitCode === 0 ? JSON.parse(viewed.stdout) : { jobs: [] }
 

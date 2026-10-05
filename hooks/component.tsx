@@ -221,6 +221,7 @@ const spanWidth = (spans: Span[]) => spans.reduce((total, [text]) => total + tex
 
 const pad = (text: string, width: number) => text + ' '.repeat(Math.max(0, width - textWidth(text)))
 
+// Cuts a row that is wider than the terminal down to fit, ending it with …, so it can't wrap onto a second line.
 const truncate = (spans: Span[], columns: number): Span[] => {
   if (columns <= 0 || spanWidth(spans) <= columns) return spans
 
