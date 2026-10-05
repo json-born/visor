@@ -1,4 +1,5 @@
 import type { On } from 'claude-code'
+import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { formatModelName, POLL_TRIGGER_COMMANDS, parseShortstat } from './register'
@@ -30,6 +31,27 @@ const run = (fields: object) => ({
   ...fields,
 })
 
+const MINUTE = 60_000
+const NOON = Date.UTC(2026, 9, 5, 12)
+
+const listed = (branch: string, minutesAgo: number, fields: object = {}) => ({
+  databaseId: minutesAgo,
+  headBranch: branch,
+  workflowName: 'Deploy CI Environment',
+  status: 'completed',
+  conclusion: 'success',
+  updatedAt: new Date(NOON - minutesAgo * MINUTE).toISOString(),
+  ...fields,
+})
+
+// What gh answers for the signed-in user's runs, newest last as gh does not promise an order.
+const mine = (runs: object[]) => ({
+  ...GIT_STDOUT,
+  'gh api user': 'octocat\n',
+  'gh run list --branch': JSON.stringify([run({})]),
+  'gh run list --user': JSON.stringify(runs),
+})
+
 const mockEngine = (on: On, stdoutByCommand: Record<string, string | null>) => {
   const commands: string[] = []
   const toasts: string[] = []
@@ -37,6 +59,7 @@ const mockEngine = (on: On, stdoutByCommand: Record<string, string | null>) => {
 
   mock.store(on)
   on('session.start', async () => ({ cwd: '/repo' }))
+  on('command.register', async (_$, event) => ({ value: { command: event.name } }))
   on('session.cwd', async () => ({ value: '/repo' }))
   on('session.model', async () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', async () => ({
@@ -237,6 +260,175 @@ test(
   }
 )
 
+const toggleCI = ($: Engine) =>
+  $.command.run({
+    command: 'visor',
+    args: 'ci',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 120 },
+  })
+
+test(
+  'lists other branches owned by user, capped at 6, descending order',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const branches = [1, 2, 3, 4, 5, 6, 7, 8].map(n => listed(`feat/b${n}`, n * 10))
+    const mocks = mockEngine(on, mine(branches.reverse()))
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    await toggleCI($)
+    const ui = await $.ui.mount(PROMPT_HINT)
+    const text = await statusText(ui)
+
+    expect(text).toMatch(/▾ 6/)
+    expect([1, 2, 3, 4, 5, 6].map(n => text.indexOf(`feat/b${n}`))).toEqual(
+      [1, 2, 3, 4, 5, 6].map(n => text.indexOf(`feat/b${n}`)).sort((a, b) => a - b)
+    )
+    expect(text).not.toMatch(/feat\/b7|feat\/b8/)
+  }
+)
+
+test(
+  'filters by the configured workflow for each branch',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(
+      on,
+      mine([
+        listed('main', 1, { workflowName: 'Deploy CI Environment' }),
+        listed('main', 2, { workflowName: 'Pipeline' }),
+        listed('feat/other-workflow', 3, { workflowName: 'Pipeline' }),
+        listed('feat/y', 4),
+      ])
+    )
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    await toggleCI($)
+    const text = await statusText(await $.ui.mount(PROMPT_HINT))
+
+    expect(text).toMatch(/▾ 2/)
+    expect(text).toMatch(/main.*Pipeline/)
+    expect(text).toMatch(/feat\/y.*Deploy CI Environment/)
+    expect(text).not.toMatch(/feat\/other-workflow/)
+  }
+)
+
+test(
+  'leaves the current branch out of the other branches',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(on, mine([listed('feat/x', 1), listed('feat/y', 2)]))
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    const text = await statusText(await $.ui.mount(PROMPT_HINT))
+
+    expect(text).toMatch(/▸ 1/)
+  }
+)
+
+test(
+  'shows no badge when there are no other branches with runs',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(on, mine([listed('feat/x', 1)]))
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    const text = await statusText(await $.ui.mount(PROMPT_HINT))
+
+    expect(text).toMatch(/passed/)
+    expect(text).not.toMatch(/[▸▾]/)
+  }
+)
+
+test(
+  'names the running and failed job and step on other branches',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const jobs = [
+      {
+        name: 'test',
+        status: 'completed',
+        conclusion: 'failure',
+        steps: [{ name: 'unit tests', status: 'completed', conclusion: 'failure' }],
+      },
+    ]
+    const mocks = mockEngine(on, {
+      ...mine([listed('feat/y', 5, { conclusion: 'failure', databaseId: 21 })]),
+      'gh run view 21': JSON.stringify({ jobs }),
+    })
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    await toggleCI($)
+    const text = await statusText(await $.ui.mount(PROMPT_HINT))
+
+    expect(text).toMatch(/feat\/y.*failed › test › unit tests/)
+  }
+)
+
+test(
+  'keeps showing other branches when listing them fails',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const stdout = mine([listed('feat/y', 5)]) as Record<string, string | null>
+    const mocks = mockEngine(on, stdout)
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+
+    stdout['gh run list --user'] = null
+    await mocks.clock.advance(60_000)
+    await toggleCI($)
+    const text = await statusText(await $.ui.mount(PROMPT_HINT))
+
+    expect(text).toMatch(/feat\/y/)
+  }
+)
+
+test(
+  'polls every 5 seconds while a run is in progress on another branch',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(
+      on,
+      mine([listed('feat/y', 5, { status: 'in_progress', conclusion: '' })])
+    )
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    expect(mocks.runListCalls()).toBe(2)
+
+    await mocks.clock.advance(5_000)
+    expect(mocks.runListCalls()).toBe(4)
+  }
+)
+
+test(
+  'toggles the expanded view from /visor ci and from a message posted by the status line',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(on, mine([listed('feat/y', 5)]))
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    const ui = await $.ui.mount(PROMPT_HINT)
+    expect(await statusText(ui)).toMatch(/▸ 1/)
+
+    await toggleCI($)
+    expect(await statusText(ui)).toMatch(/▾ 1/)
+
+    await ui.post({ toggle: 'ci' })
+    expect(await statusText(ui)).toMatch(/▸ 1/)
+
+    await ui.post({ toggle: 'something-else' })
+    expect(await statusText(ui)).toMatch(/▸ 1/)
+  }
+)
+
 test('parses git shortstat', () => {
   expect(parseShortstat(' 3 files changed, 678 insertions(+), 222 deletions(-)')).toEqual({
     added: 678,
@@ -271,3 +463,47 @@ test('polls after pushes, reruns and new PRs only', () => {
     false
   )
 })
+
+test(
+  'toggles when the CI segment is clicked and ignores clicks elsewhere',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(on, mine([listed('feat/y', 5)]))
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    const ui = await $.ui.mount(PROMPT_HINT)
+    await ui.resize({ columns: 200, rows: 5 })
+
+    const texts = await ui.findAll({ type: 'Text', in: 'visor' })
+    const line = texts.map(element => element.text).find(text => text.includes('')) ?? ''
+    const ciColumn = [...line].indexOf('')
+
+    await ui.pointer({ type: 'down', x: 2, y: 2, button: 'left' })
+    expect(await statusText(ui)).toMatch(/▸ 1/)
+
+    await ui.pointer({ type: 'down', x: ciColumn + 1, y: 3, button: 'left' })
+    expect(await statusText(ui)).toMatch(/▸ 1/)
+
+    await ui.pointer({ type: 'down', x: ciColumn + 1, y: 2, button: 'left' })
+    expect(await statusText(ui)).toMatch(/▾ 1/)
+  }
+)
+
+test(
+  'does not expand when there are no other branches to show',
+  { options: CI_OPTIONS },
+  async ($, on) => {
+    const mocks = mockEngine(on, mine([listed('feat/x', 1)]))
+
+    await $.session.start(SESSION_START)
+    await mocks.clock.settle()
+    const ui = await $.ui.mount(PROMPT_HINT)
+
+    await toggleCI($)
+    await ui.post({ toggle: 'ci' })
+
+    expect(await statusText(ui)).not.toMatch(/●/)
+    expect(await toggleCI($)).toMatchObject({ text: 'No other branches to expand.' })
+  }
+)
