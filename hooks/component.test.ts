@@ -45,7 +45,7 @@ test('renders correctly', () => {
   ])
 })
 
-test('renders the initial state before any polling has completed', () => {
+test('renders the initial state correctly', () => {
   expect(
     render({ branch: '', contextPercent: null, now: null, added: 0, removed: 0, actions: null })
   ).toEqual([
