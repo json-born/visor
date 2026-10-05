@@ -16,7 +16,7 @@ main | Fable 5.1 | ████░░░░░░ 41% | 1h12m +84/-12 | ⠦ Depl
 
 - a Claude Code build with hooks modules (tested on 2.1.289)
 - `gh`, logged in
-- a Nerd Font in the terminal, for the icons
+- a Nerd Font in the terminal, for the icons: `brew install --cask font-jetbrains-mono-nerd-font`, then pick it in the terminal's settings
 
 ## Install
 
