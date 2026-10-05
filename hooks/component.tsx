@@ -120,8 +120,15 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
   const colour = THEMES[props.theme]
   const contextPercent = props.contextPercent ?? 0
 
-  const contextColour =
-    contextPercent < 50 ? colour.green : contextPercent < 80 ? colour.yellow : colour.red
+  // The context bar goes yellow from half full and red from four fifths full.
+  let contextColour = colour.green
+
+  if (contextPercent >= 80) {
+    contextColour = colour.red
+  } else if (contextPercent >= 50) {
+    contextColour = colour.yellow
+  }
+
   const filledCells = Math.round((contextPercent * PROGRESS_CELLS) / 100)
 
   const elapsedMs = (props.now ?? props.sessionStartedAt) - props.sessionStartedAt
@@ -131,23 +138,29 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
       ? `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}m`
       : `${minutes}m`
 
+  // Each entry is one segment of the status line, shown left to right. An empty segment is
+  // dropped below, and wrapSections moves whole segments onto the next line when they don't fit.
   const sections: Span[][] = [
+    // Git branch, left out when the session isn't on one.
     props.branch
       ? [
           [`${ICON.branch}  `, colour.comment],
           [props.branch, colour.fg],
         ]
       : [],
+    // Model name, e.g. "Opus 5.5".
     [
       [`${ICON.model}  `, colour.comment],
       [props.model, colour.muted],
     ],
+    // Context window usage: a ten-cell bar, filled in proportion, then the percentage.
     [
       [`${ICON.context}  `, colour.comment],
       ['█'.repeat(filledCells), contextColour],
       ['░'.repeat(PROGRESS_CELLS - filledCells), colour.dark],
       [` ${contextPercent}%`, contextColour],
     ],
+    // Session length, then lines added and removed since the last commit.
     [
       [`${ICON.clock}  `, colour.comment],
       [sessionTime, colour.muted],
@@ -155,6 +168,8 @@ export const buildSections = (props: Props, frame: number): Span[][] => {
       ['/', colour.comment],
       [`-${props.removed}`, colour.red],
     ],
+    // CI for the current branch, then the `▸ N` / `▾ N` badge for the user's other branches.
+    // Left out when there is no branch or no workflow configured.
     props.ci
       ? [
           [`${ICON.actions}  `, colour.comment],
