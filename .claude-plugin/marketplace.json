@@ -1,0 +1,12 @@
+{
+  "name": "visor",
+  "description": "A heads up display for Claude Code",
+  "owner": { "name": "Domenico Salvia" },
+  "plugins": [
+    {
+      "name": "visor",
+      "source": "./",
+      "description": "A heads up display for Claude Code"
+    }
+  ]
+}
