@@ -1,10 +1,8 @@
 # Visor
 
-A heads up display for Claude Code. Visor draws a status line under the prompt (shown here without its Nerd Font icons):
+A heads up display for Claude Code. Visor draws a status line under the prompt:
 
-```
-main | Fable 5.1 | ████░░░░░░ 41% | 1h12m +84/-12 | ⠦ Deploy › Terraform apply
-```
+![Visor's status line with the CI runs table expanded](docs/screenshot.png)
 
 - the current git branch
 - the active model
