@@ -2,6 +2,9 @@
   "name": "visor",
   "version": "0.1.0",
   "description": "A heads up display for Claude Code",
+  "author": { "name": "Domenico Salvia" },
+  "repository": "https://github.com/json-born/visor",
+  "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
     "theme": {
