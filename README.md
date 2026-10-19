@@ -4,14 +4,11 @@ A heads up display for Claude Code. Visor draws a status line under the prompt:
 
 ![Visor's status line with the CI runs table expanded](docs/screenshot.png)
 
-- the current git branch
-- the active model
-- context window usage
-- session time, and the working tree's lines added/removed against `HEAD`
-- the latest GitHub Actions run on the branch: the running or failed job and step, or whether it passed, is queued or was cancelled
-- a `▸ N` badge when you have CI runs on other branches
+- branch, model and context usage
+- session time and lines changed
+- GitHub Actions status for the branch
 
-Click the CI section, or run `/visor ci`, to expand a table of the latest run on up to six of your other branches, with each run's workflow, state and age. Do the same again to collapse it.
+Click the CI section or run `/visor ci` to see CI on your other branches.
 
 ## Requirements
 
@@ -45,13 +42,6 @@ echo '{"mainBranch":"main","githubActionsMainWorkflow":"Pipeline","githubActions
 | `githubActionsBranchWorkflow` | The workflow that runs on every other branch |
 
 Workflow names are passed to `gh run list --workflow`, so use the workflow's name or its file name (e.g. `ci.yml`). The GitHub Actions section stays hidden until a workflow is set for the current branch.
-
-## Polling
-
-- `gh run list` once a minute, or every 5 seconds while a run is in progress on any listed branch and for two minutes after a `git push`, `gh pr create`, `gh workflow run` or `gh run rerun` goes through the Bash tool. Other branches come from your 30 most recent runs, filtered to the workflow configured for each branch.
-- `git branch` and `git diff --shortstat` every 5 seconds
-
-Everything Visor runs is read-only.
 
 ## Development
 
