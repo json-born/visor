@@ -1,17 +1,21 @@
 # Visor
 
-A heads up display for Claude Code. Visor adds a status bar under the prompt showing:
+A heads up display for Claude Code. Visor draws a status line under the prompt (shown here without its Nerd Font icons):
+
+```
+main | Fable 5.1 | ████░░░░░░ 41% | 1h12m +84/-12 | ⠦ Deploy › Terraform apply
+```
 
 - the current git branch
 - the active model
 - context window usage
-- session time and uncommitted lines added/removed
-- the latest GitHub Actions run for your branch, including the job and step that's running or failed
+- session time, and the working tree's lines added/removed against `HEAD`
+- the latest GitHub Actions run on the branch: the running or failed job and step, or whether it passed, is queued or was cancelled
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code)
-- A [Nerd Font](https://www.nerdfonts.com/) in your terminal. Without one, the icons show as empty boxes.
+- A Claude Code build with hooks modules (tested on 2.1.289)
+- A [Nerd Font](https://www.nerdfonts.com/) in your terminal, for the icons. Without one they show as empty boxes. On macOS: `brew install --cask font-jetbrains-mono-nerd-font`, then select it in your terminal's settings.
 - The [GitHub CLI](https://cli.github.com/), signed in with `gh auth login`. Only needed for the GitHub Actions section.
 
 ## Install
@@ -25,25 +29,35 @@ In Claude Code:
 
 ## Configuration
 
-Set these in the plugin's options via `/plugin`:
+Run `/plugin configure visor`, or set options from the shell:
+
+```sh
+echo '{"mainBranch":"main","githubActionsMainWorkflow":"Pipeline","githubActionsBranchWorkflow":"PR Validation"}' \
+  | claude plugin configure visor --values-stdin
+```
 
 | Option | Description |
 | --- | --- |
-| Theme | `Tokyo Night` (default) or `Catppuccin Mocha` |
-| Main branch | Your main branch name, e.g. `main` |
-| Main workflow | The workflow that runs on pushes to your main branch |
-| Branch workflow | The workflow that runs on pull request branches |
+| `theme` | `Tokyo Night` (default) or `Catppuccin Mocha` |
+| `mainBranch` | The branch that uses the main workflow, e.g. `main` |
+| `githubActionsMainWorkflow` | The workflow that runs on pushes to `mainBranch` |
+| `githubActionsBranchWorkflow` | The workflow that runs on every other branch |
 
-Workflow names are passed to `gh run list --workflow`, so use the workflow's name or its file name (e.g. `ci.yml`). If neither workflow is set, the GitHub Actions section is hidden.
+Workflow names are passed to `gh run list --workflow`, so use the workflow's name or its file name (e.g. `ci.yml`). The GitHub Actions section stays hidden until a workflow is set for the current branch.
 
-Visor polls GitHub every minute, and every 5 seconds while a run is in progress or for two minutes after a `git push`, `gh pr create`, `gh workflow run` or `gh run rerun`.
+## Polling
+
+- `gh run list` once a minute, or every 5 seconds while a run is in progress and for two minutes after a `git push`, `gh pr create`, `gh workflow run` or `gh run rerun` goes through the Bash tool
+- `git branch` and `git diff --shortstat` every 5 seconds
+
+Everything Visor runs is read-only.
 
 ## Development
 
 ```sh
 npm install
 npm run check      # lint and format with Biome
-npm run typecheck
+npm run typecheck  # tsc, once Claude Code has written .claude-plugin/types
 npm test
 ```
 
